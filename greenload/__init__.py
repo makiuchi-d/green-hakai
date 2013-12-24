@@ -22,6 +22,7 @@ import urllib
 import urlparse
 import random
 from gevent import socket
+import json
 
 
 debug = logging.debug
@@ -184,6 +185,10 @@ class Action(object):
             self._scan_r = re.compile(scan)
         else:
             self._scan_r = None
+        if action.get('scan_jsons'):
+            self._scan_jsons = action.get('scan_jsons', {}).items()
+        else:
+            self._scan_jsons = None
 
     def _scan(self, response_body, vs):
         u"""conf['scan'] で指定された正規表現でチェック&変数キャプチャする"""
@@ -195,8 +200,20 @@ class Action(object):
         vs.update(m.groupdict(''))
         return True
 
+    def _scan_json(self, response_body, vs):
+        data = json.loads(response_body)
+        scaned = {}
+        if self._scan_jsons:
+            for (k, v) in self._scan_jsons:
+                try:
+                    scaned[k] = eval(v)
+                except KeyError:
+                    scaned[k] = None
+            vs.update(scaned)
+        return self._scan(response_body, vs)
+
     def _replace_names(self, s, v, _sub_name=re.compile('%\((.+?)\)%').sub):
-        return _sub_name(lambda m: v[m.group(1)], s)
+        return _sub_name(lambda m: str(v[m.group(1)]), s)
 
     def execute(self, client, vars_):
         u"""1アクションの実行
@@ -289,7 +306,10 @@ class Action(object):
         elif not (response and response.status_code // 10 == 20):
             succ = False
         else:
-            succ = self._scan(response_body, vars_)
+            if response and response['content-type'] == MIMETYPE_JSON:
+                succ = self._scan_json(response_body, vars_)
+            else:
+                succ = self._scan(response_body, vars_)
 
         if succ:
             global SUCC
